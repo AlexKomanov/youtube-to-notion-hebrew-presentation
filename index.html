@@ -1,0 +1,1413 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ניהול רשימת צפייה ב-YouTube דרך Claude Code ו-Notion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;700;800;900&family=JetBrains+Mono:wght@400;600&family=Exo+2:wght@300;700;900&display=swap" rel="stylesheet">
+<style>
+  /* ===== CSS VARIABLES ===== */
+  :root {
+    --bg-void: #f0f4ff;
+    --bg-deep: #e4eaf8;
+    --bg-card: rgba(255, 255, 255, 0.93);
+    --bg-glass: rgba(255, 255, 255, 0.72);
+
+    --yt-red: #cc0022;
+    --yt-red-glow: rgba(204, 0, 34, 0.2);
+    --yt-red-dim: rgba(204, 0, 34, 0.08);
+
+    --notion-purple: #5b3ede;
+    --notion-purple-glow: rgba(91, 62, 222, 0.22);
+    --notion-purple-dim: rgba(91, 62, 222, 0.09);
+
+    --cyan: #0077a8;
+    --cyan-glow: rgba(0, 119, 168, 0.22);
+    --cyan-dim: rgba(0, 119, 168, 0.09);
+
+    --gold: #8a5d00;
+    --gold-glow: rgba(138, 93, 0, 0.2);
+
+    --text-primary: #0c1135;
+    --text-secondary: rgba(18, 32, 100, 0.78);
+    --text-dim: rgba(50, 70, 145, 0.55);
+
+    --border-subtle: rgba(30, 50, 140, 0.1);
+    --border-glow-red: rgba(204, 0, 34, 0.28);
+    --border-glow-purple: rgba(91, 62, 222, 0.28);
+    --border-glow-cyan: rgba(0, 119, 168, 0.28);
+
+    --transition-slide: 0.72s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* ===== RESET ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg-void);
+    overflow: hidden;
+    font-family: 'Heebo', sans-serif;
+    color: var(--text-primary);
+    direction: rtl;
+  }
+
+  /* ===== BACKGROUND SYSTEM ===== */
+  #bg-canvas {
+    position: fixed; inset: 0; z-index: 0;
+    background: radial-gradient(ellipse 80% 60% at 25% 20%, rgba(91,62,222,0.14) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 50% at 80% 80%, rgba(204,0,34,0.09) 0%, transparent 55%),
+                radial-gradient(ellipse 50% 40% at 65% 45%, rgba(0,119,168,0.10) 0%, transparent 50%),
+                var(--bg-void);
+  }
+
+  /* Particle stars */
+  .star {
+    position: fixed;
+    border-radius: 50%;
+    background: rgba(91,62,222,0.25);
+    animation: twinkle var(--dur, 3s) ease-in-out infinite var(--delay, 0s);
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: var(--base-op, 0.3); transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.4); }
+  }
+
+  /* Grid overlay */
+  #grid-overlay {
+    position: fixed; inset: 0; z-index: 1;
+    background-image:
+      linear-gradient(rgba(91,62,222,0.07) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(91,62,222,0.07) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+  }
+
+  /* Scan line */
+  #scan-line {
+    position: fixed; left: 0; right: 0; height: 1px; z-index: 2;
+    background: linear-gradient(90deg, transparent, rgba(91,62,222,0.18), transparent);
+    animation: scan 8s linear infinite;
+    pointer-events: none;
+  }
+  @keyframes scan { 0% { top: -2px; } 100% { top: 100vh; } }
+
+  /* ===== SLIDE SYSTEM ===== */
+  #presentation {
+    position: fixed; inset: 0; z-index: 10;
+    overflow: hidden;
+  }
+
+  .slide {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    padding: 40px 70px 90px;
+    opacity: 0;
+    transform: translateX(-80px);
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
+
+  .slide.active {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+  }
+
+  /* Animate-in children */
+  .slide.active .animate-in {
+    animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .slide.active .animate-in:nth-child(1) { animation-delay: 0.05s; }
+  .slide.active .animate-in:nth-child(2) { animation-delay: 0.15s; }
+  .slide.active .animate-in:nth-child(3) { animation-delay: 0.25s; }
+  .slide.active .animate-in:nth-child(4) { animation-delay: 0.35s; }
+  .slide.active .animate-in:nth-child(5) { animation-delay: 0.45s; }
+  .slide.active .animate-in:nth-child(6) { animation-delay: 0.55s; }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(22px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ===== NAV BAR ===== */
+  #nav-bar {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px;
+    background: rgba(240, 244, 255, 0.95);
+    border-top: 1px solid var(--border-subtle);
+    backdrop-filter: blur(20px);
+    box-shadow: 0 -4px 24px rgba(30,50,140,0.08);
+  }
+
+  .nav-btn {
+    width: 54px; height: 54px;
+    border: 2px solid rgba(30,50,140,0.3);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.95);
+    color: var(--text-primary);
+    font-size: 24px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(30,50,140,0.12);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .nav-btn:hover { border-color: var(--notion-purple); color: var(--notion-purple); box-shadow: 0 4px 16px var(--notion-purple-glow); }
+  .nav-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .nav-btn:disabled:hover { border-color: rgba(30,50,140,0.3); color: var(--text-primary); box-shadow: 0 2px 8px rgba(30,50,140,0.12); }
+
+  #slide-counter {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    color: var(--text-secondary);
+    letter-spacing: 0.1em;
+    font-weight: 600;
+  }
+
+  #progress-bar-wrap {
+    position: fixed; bottom: 72px; left: 0; right: 0; z-index: 100;
+    height: 2px; background: rgba(30,50,140,0.1);
+  }
+  #progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--yt-red), var(--notion-purple), var(--cyan));
+    transition: width 0.4s ease;
+  }
+
+  #keyboard-hint {
+    font-size: 14px;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    letter-spacing: 0.05em;
+    font-weight: 700;
+  }
+
+  /* ===== TYPOGRAPHY ===== */
+  .slide-tag {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 16px;
+    border-radius: 100px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-family: 'Exo 2', sans-serif;
+    margin-bottom: 18px;
+  }
+  .tag-red { background: var(--yt-red-dim); border: 1px solid var(--border-glow-red); color: var(--yt-red); }
+  .tag-purple { background: var(--notion-purple-dim); border: 1px solid var(--border-glow-purple); color: var(--notion-purple); }
+  .tag-cyan { background: var(--cyan-dim); border: 1px solid var(--border-glow-cyan); color: var(--cyan); }
+
+  .slide-title {
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 900;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    text-align: center;
+  }
+  .slide-title.xl { font-size: clamp(2.6rem, 5.5vw, 4.4rem); }
+  .slide-title.lg { font-size: clamp(2.1rem, 4vw, 3.3rem); }
+  .slide-title.md { font-size: clamp(1.7rem, 3vw, 2.5rem); }
+
+  .grad-red { background: linear-gradient(135deg, #e8004a, var(--yt-red)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .grad-purple { background: linear-gradient(135deg, #7c52f5, var(--notion-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .grad-cyan { background: linear-gradient(135deg, var(--cyan), #0099cc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+  .grad-mixed { background: linear-gradient(135deg, var(--yt-red) 0%, var(--notion-purple) 50%, var(--cyan) 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+
+  .slide-subtitle {
+    font-size: clamp(1.15rem, 2vw, 1.5rem);
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.6;
+    max-width: 720px;
+    font-weight: 400;
+  }
+
+  /* ===== GLASS CARDS ===== */
+  .glass-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 20px;
+    padding: 28px 32px;
+    backdrop-filter: blur(24px);
+    position: relative;
+    overflow: hidden;
+  }
+  .glass-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.8), transparent);
+  }
+  .glass-card.red { border-color: var(--border-glow-red); box-shadow: 0 4px 24px rgba(204,0,34,0.1), 0 1px 6px rgba(204,0,34,0.06); }
+  .glass-card.purple { border-color: var(--border-glow-purple); box-shadow: 0 4px 24px rgba(91,62,222,0.12), 0 1px 6px rgba(91,62,222,0.07); }
+  .glass-card.cyan { border-color: var(--border-glow-cyan); box-shadow: 0 4px 24px rgba(0,119,168,0.1), 0 1px 6px rgba(0,119,168,0.06); }
+
+  /* ===== SPLIT LAYOUT ===== */
+  .split-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    width: 100%;
+    max-width: 1100px;
+    align-items: center;
+  }
+
+  /* ===== FEATURE LIST ===== */
+  .feature-list {
+    list-style: none;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .feature-list li {
+    display: flex; align-items: flex-start; gap: 14px;
+    font-size: 19px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+  }
+  .feature-icon {
+    width: 32px; height: 32px; flex-shrink: 0;
+    border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  .icon-red { background: var(--yt-red-dim); border: 1px solid var(--border-glow-red); }
+  .icon-purple { background: var(--notion-purple-dim); border: 1px solid var(--border-glow-purple); }
+  .icon-cyan { background: var(--cyan-dim); border: 1px solid var(--border-glow-cyan); }
+
+  /* ===== CODE BLOCK ===== */
+  .code-block {
+    background: #eef0ff;
+    border: 1px solid rgba(91,62,222,0.22);
+    border-radius: 14px;
+    padding: 20px 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    position: relative;
+    overflow: hidden;
+    direction: ltr;
+    text-align: left;
+    box-shadow: 0 2px 12px rgba(91,62,222,0.08);
+  }
+  .code-block::before {
+    content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(91,62,222,0.06), transparent);
+    animation: code-scan 4s linear infinite;
+  }
+  @keyframes code-scan { to { left: 150%; } }
+  .code-block .prompt { color: var(--notion-purple); font-weight: 700; }
+  .code-block .cmd { color: #0c1135; }
+  .code-block .comment { color: rgba(50,70,145,0.5); }
+  .code-block .url { color: var(--yt-red); }
+  .code-block .string { color: var(--gold); }
+
+  .code-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid rgba(91,62,222,0.12);
+    direction: rtl;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+  .code-filename {
+    font-size: 13px; color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    margin-right: auto;
+    direction: ltr;
+  }
+
+  /* ===== STEP BADGES ===== */
+  .step-badge {
+    width: 38px; height: 38px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 900; font-size: 16px;
+    flex-shrink: 0;
+  }
+  .badge-red { background: var(--yt-red-dim); border: 1px solid var(--yt-red); color: var(--yt-red); box-shadow: 0 0 12px var(--yt-red-glow); }
+  .badge-purple { background: var(--notion-purple-dim); border: 1px solid var(--notion-purple); color: var(--notion-purple); box-shadow: 0 0 12px var(--notion-purple-glow); }
+  .badge-cyan { background: var(--cyan-dim); border: 1px solid var(--cyan); color: var(--cyan); box-shadow: 0 0 12px var(--cyan-glow); }
+
+  /* ===== CARDS GRID ===== */
+  .cards-grid {
+    display: grid;
+    gap: 20px;
+    width: 100%;
+    max-width: 1100px;
+  }
+  .cards-grid.col3 { grid-template-columns: repeat(3, 1fr); }
+  .cards-grid.col2 { grid-template-columns: repeat(2, 1fr); }
+
+  .mini-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 16px;
+    padding: 22px 24px;
+    backdrop-filter: blur(20px);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .mini-card:hover { transform: translateY(-3px); }
+  .mini-card.red:hover { box-shadow: 0 8px 32px var(--yt-red-glow); border-color: var(--border-glow-red); }
+  .mini-card.purple:hover { box-shadow: 0 8px 32px var(--notion-purple-glow); border-color: var(--border-glow-purple); }
+  .mini-card.cyan:hover { box-shadow: 0 8px 32px var(--cyan-glow); border-color: var(--border-glow-cyan); }
+
+  .mini-card-icon { font-size: 34px; margin-bottom: 12px; }
+  .mini-card-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+  .mini-card-body { font-size: 16px; color: var(--text-secondary); line-height: 1.55; }
+
+  /* ===== NOTION MOCKUP ===== */
+  .notion-mockup {
+    background: rgba(255, 255, 255, 0.97);
+    border: 1px solid var(--border-glow-purple);
+    border-radius: 16px;
+    overflow: hidden;
+    font-size: 15px;
+    box-shadow: 0 8px 32px rgba(91,62,222,0.12);
+  }
+  .notion-topbar {
+    background: rgba(248,248,252,0.98);
+    padding: 10px 16px;
+    display: flex; align-items: center; gap: 10px;
+    border-bottom: 1px solid rgba(91,62,222,0.12);
+  }
+  .notion-topbar-title {
+    font-size: 13px; color: var(--text-secondary); font-weight: 600;
+  }
+  .notion-row {
+    display: grid; grid-template-columns: 2fr 1fr 1fr;
+    padding: 9px 16px;
+    border-bottom: 1px solid rgba(30,50,140,0.07);
+    align-items: center;
+    gap: 12px;
+    transition: background 0.15s ease;
+    direction: ltr;
+  }
+  .notion-row:hover { background: rgba(91,62,222,0.04); }
+  .notion-row.header { color: var(--text-dim); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; background: transparent; }
+  .notion-cell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
+  .notion-cell.title { color: var(--text-primary); font-weight: 500; }
+  .bucket-chip {
+    display: inline-block; padding: 2px 9px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
+  }
+  .bucket-claude { background: rgba(91,62,222,0.12); color: #4a28c8; border: 1px solid rgba(91,62,222,0.25); }
+  .bucket-lessons { background: rgba(0,119,168,0.1); color: #005a88; border: 1px solid rgba(0,119,168,0.25); }
+  .bucket-general { background: rgba(138,93,0,0.1); color: #7a5000; border: 1px solid rgba(138,93,0,0.25); }
+  .bucket-long { background: rgba(204,0,34,0.1); color: #990018; border: 1px solid rgba(204,0,34,0.25); }
+
+  /* ===== FLOW STEPS ===== */
+  .flow-steps {
+    display: flex; flex-direction: column; gap: 10px;
+    width: 100%;
+  }
+  .flow-step {
+    display: flex; align-items: center; gap: 14px;
+    padding: 11px 16px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    transition: all 0.2s ease;
+  }
+  .flow-step:hover { border-color: var(--notion-purple); background: var(--notion-purple-dim); }
+  .flow-step-label { font-size: 18px; color: var(--text-secondary); line-height: 1.45; }
+  .flow-step-label strong { color: var(--text-primary); }
+
+  /* ===== JOURNEY ROW ===== */
+  .journey-row {
+    display: flex; align-items: center; gap: 8px;
+    flex-wrap: wrap; justify-content: center;
+  }
+  .journey-item {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px 16px;
+    background: var(--bg-glass);
+    border: 1px solid var(--border-subtle);
+    border-radius: 14px;
+    min-width: 100px;
+    text-align: center;
+  }
+  .journey-icon { font-size: 22px; }
+  .journey-label { font-size: 15px; color: var(--text-secondary); font-weight: 600; }
+  .journey-arrow { color: var(--text-dim); font-size: 18px; }
+
+  /* ===== PULSE ORB ===== */
+  .orb {
+    position: absolute; border-radius: 50%;
+    filter: blur(70px); pointer-events: none; z-index: -1;
+    animation: pulse-orb 6s ease-in-out infinite;
+  }
+  @keyframes pulse-orb {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+
+  /* ===== TITLE SLIDE SPECIFIC ===== */
+  #slide-0 .big-title {
+    font-family: 'Exo 2', sans-serif;
+    font-weight: 900;
+    font-size: clamp(2rem, 4.5vw, 3.8rem);
+    line-height: 1.1;
+    text-align: center;
+    letter-spacing: -0.02em;
+  }
+  #slide-0 .logo-row {
+    display: flex; align-items: center; gap: 20px; justify-content: center;
+    margin: 24px 0;
+  }
+  #slide-0 .logo-pill {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 20px; border-radius: 100px;
+    font-size: 16px; font-weight: 700;
+    font-family: 'Exo 2', sans-serif;
+  }
+  #slide-0 .logo-pill.yt { background: var(--yt-red-dim); border: 1px solid var(--border-glow-red); color: var(--yt-red); }
+  #slide-0 .logo-pill.notion { background: var(--notion-purple-dim); border: 1px solid var(--border-glow-purple); color: var(--notion-purple); }
+  #slide-0 .logo-pill.claude { background: var(--cyan-dim); border: 1px solid var(--border-glow-cyan); color: var(--cyan); }
+  #slide-0 .connect-line { width: 32px; height: 1px; background: linear-gradient(90deg, var(--yt-red), var(--notion-purple)); }
+
+  /* ===== GLITCH EFFECT ===== */
+  .glitch {
+    position: relative;
+  }
+  .glitch::before, .glitch::after {
+    content: attr(data-text);
+    position: absolute; top: 0; left: 0; right: 0;
+    font-family: inherit; font-weight: inherit; font-size: inherit;
+    letter-spacing: inherit; line-height: inherit;
+    background: inherit; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    animation: none;
+  }
+  .glitch.active::before {
+    clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%);
+    transform: translate(-3px, -2px);
+    animation: glitch-top 0.3s steps(1) 1;
+    opacity: 0.8;
+    filter: hue-rotate(90deg);
+  }
+  .glitch.active::after {
+    clip-path: polygon(0 65%, 100% 65%, 100% 100%, 0 100%);
+    transform: translate(3px, 2px);
+    animation: glitch-bot 0.3s steps(1) 1;
+    opacity: 0.8;
+    filter: hue-rotate(-90deg);
+  }
+  @keyframes glitch-top {
+    0%   { clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%); transform: translate(-3px, -2px); }
+    33%  { clip-path: polygon(0 10%, 100% 10%, 100% 20%, 0 20%); transform: translate(3px, 2px); }
+    66%  { clip-path: polygon(0 0, 100% 0, 100% 50%, 0 50%); transform: translate(-2px, 1px); }
+    100% { clip-path: polygon(0 0, 100% 0, 100% 35%, 0 35%); transform: translate(0, 0); }
+  }
+  @keyframes glitch-bot {
+    0%   { clip-path: polygon(0 65%, 100% 65%, 100% 100%, 0 100%); transform: translate(3px, 2px); }
+    33%  { clip-path: polygon(0 75%, 100% 75%, 100% 85%, 0 85%); transform: translate(-3px, -2px); }
+    66%  { clip-path: polygon(0 60%, 100% 60%, 100% 100%, 0 100%); transform: translate(2px, -1px); }
+    100% { clip-path: polygon(0 65%, 100% 65%, 100% 100%, 0 100%); transform: translate(0, 0); }
+  }
+
+  /* ===== BUCKET CHIPS ===== */
+  .buckets-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 12px; width: 100%; max-width: 900px;
+  }
+  .bucket-card {
+    padding: 18px 14px; border-radius: 16px;
+    text-align: center;
+    border: 1px solid var(--border-subtle);
+    background: var(--bg-glass);
+    transition: all 0.25s ease;
+  }
+  .bucket-card:hover { transform: translateY(-4px); }
+  .bucket-card .bucket-emoji { font-size: 34px; margin-bottom: 10px; }
+  .bucket-card .bucket-name { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+  .bucket-card .bucket-desc { font-size: 14px; color: var(--text-secondary); line-height: 1.45; }
+
+  .bucket-card.b1 { border-color: rgba(91,62,222,0.35); background: rgba(91,62,222,0.07); }
+  .bucket-card.b1 .bucket-name { color: #4a28c8; }
+  .bucket-card.b2 { border-color: rgba(0,119,168,0.3); background: rgba(0,119,168,0.07); }
+  .bucket-card.b2 .bucket-name { color: var(--cyan); }
+  .bucket-card.b3 { border-color: rgba(138,93,0,0.3); background: rgba(138,93,0,0.07); }
+  .bucket-card.b3 .bucket-name { color: var(--gold); }
+  .bucket-card.b4 { border-color: rgba(204,0,34,0.3); background: rgba(204,0,34,0.07); }
+  .bucket-card.b4 .bucket-name { color: #aa0020; }
+  .bucket-card.b5 { border-color: rgba(10,122,80,0.3); background: rgba(10,122,80,0.07); }
+  .bucket-card.b5 .bucket-name { color: #0a7a50; }
+
+  /* ===== CONCLUSION ===== */
+  .benefit-list { display: flex; flex-direction: column; gap: 12px; }
+  .benefit-item {
+    display: flex; align-items: center; gap: 16px;
+    padding: 16px 22px;
+    background: var(--bg-glass);
+    border-radius: 12px;
+    border: 1px solid var(--border-subtle);
+    font-size: 19px;
+    color: var(--text-secondary);
+  }
+  .benefit-check {
+    width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px;
+    background: rgba(10,122,80,0.1); border: 1px solid rgba(10,122,80,0.35); color: #0a7a50;
+  }
+
+  /* ===== SKILL SLIDE SCROLL ===== */
+  #slide-6 {
+    justify-content: flex-start;
+    padding-top: 28px;
+    overflow-y: auto;
+  }
+
+  /* ===== RESPONSIVE ===== */
+  @media (max-width: 768px) {
+    .slide { padding: 20px 18px 80px; justify-content: flex-start; padding-top: 30px; overflow-y: auto; }
+    .split-layout { grid-template-columns: 1fr; gap: 20px; }
+    .cards-grid.col3 { grid-template-columns: 1fr; }
+    .cards-grid.col2 { grid-template-columns: 1fr; }
+    .buckets-grid { grid-template-columns: repeat(2, 1fr); }
+    .slide-title.xl { font-size: 2rem; }
+    .slide-title.lg { font-size: 1.5rem; }
+    .slide-subtitle { font-size: 1rem; }
+    #keyboard-hint { display: none; }
+    .journey-item { min-width: 80px; padding: 10px; }
+  }
+
+  @media (max-width: 480px) {
+    .buckets-grid { grid-template-columns: 1fr 1fr; }
+    #slide-0 .logo-row { flex-direction: column; gap: 10px; }
+    #slide-0 .connect-line { width: 1px; height: 20px; background: linear-gradient(180deg, var(--yt-red), var(--notion-purple)); }
+  }
+</style>
+</head>
+<body>
+
+<!-- BACKGROUND -->
+<div id="bg-canvas"></div>
+<div id="grid-overlay"></div>
+<div id="scan-line"></div>
+
+<!-- PRESENTATION -->
+<div id="presentation">
+
+  <!-- ===== SLIDE 0: TITLE ===== -->
+  <div class="slide" id="slide-0">
+    <div class="orb" style="width:400px;height:400px;background:radial-gradient(circle,rgba(255,0,51,0.12),transparent);top:-100px;right:-100px;animation-duration:7s;"></div>
+    <div class="orb" style="width:350px;height:350px;background:radial-gradient(circle,rgba(124,92,252,0.1),transparent);bottom:-80px;left:-80px;animation-duration:9s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:16px;">
+      <span class="slide-tag tag-red">&#9654; YouTube</span>
+      &nbsp;
+      <span class="slide-tag tag-purple">&#9635; Notion</span>
+      &nbsp;
+      <span class="slide-tag tag-cyan">&#10024; Claude Code</span>
+    </div>
+
+    <div class="animate-in">
+      <h1 class="big-title glitch" data-text="ניהול רשימת צפייה">
+        <span class="grad-mixed">ניהול רשימת צפייה</span>
+      </h1>
+      <h1 class="big-title" style="margin-top:6px;">
+        <span style="color:var(--text-primary);">ב-YouTube דרך </span><span class="grad-cyan">Claude Code</span><span style="color:var(--text-primary);"> ו-</span><span class="grad-purple">Notion</span>
+      </h1>
+    </div>
+
+    <div class="animate-in logo-row">
+      <div class="logo-pill yt">&#9654; YouTube</div>
+      <div class="connect-line"></div>
+      <div class="logo-pill claude">&#10024; Claude Code</div>
+      <div class="connect-line" style="background:linear-gradient(90deg,var(--notion-purple),var(--cyan));"></div>
+      <div class="logo-pill notion">&#9635; Notion</div>
+    </div>
+
+    <div class="animate-in slide-subtitle">
+      שמירה אוטומטית של סרטוני YouTube לרשימת צפייה מסודרת ב-Notion —
+      ללא העתקה ידנית, ללא כפילויות, עם קטגוריזציה חכמה
+    </div>
+
+    <div class="animate-in" style="margin-top:24px;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <div style="padding:10px 22px;border:2px solid rgba(30,50,140,0.25);border-radius:10px;font-size:15px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,0.85);box-shadow:0 2px 8px rgba(30,50,140,0.1);font-weight:600;">
+        9 שלבים
+      </div>
+      <div style="padding:10px 22px;border:2px solid rgba(30,50,140,0.25);border-radius:10px;font-size:15px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,0.85);box-shadow:0 2px 8px rgba(30,50,140,0.1);font-weight:600;">
+        100% אוטומטי
+      </div>
+      <div style="padding:10px 22px;border:2px solid rgba(30,50,140,0.25);border-radius:10px;font-size:15px;color:var(--text-secondary);font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,0.85);box-shadow:0 2px 8px rgba(30,50,140,0.1);font-weight:600;">
+        Claude Code + MCP
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 1: מבוא ===== -->
+  <div class="slide" id="slide-1">
+    <div class="orb" style="width:300px;height:300px;background:radial-gradient(circle,rgba(0,229,255,0.08),transparent);top:50px;left:50px;animation-duration:8s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-cyan">מבוא</span>
+    </div>
+
+    <div class="animate-in" style="margin-bottom:24px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-mixed">מה הכלי הזה עושה?</span></h2>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;">
+      <div class="cards-grid col3">
+        <div class="mini-card red">
+          <div class="mini-card-icon">&#9654;</div>
+          <div class="mini-card-title" style="color:#aa0020;">גלה סרטון</div>
+          <div class="mini-card-body">מוצאים סרטון YouTube מעניין בזמן גלישה</div>
+        </div>
+        <div class="mini-card cyan">
+          <div class="mini-card-icon">&#128204;</div>
+          <div class="mini-card-title" style="color:var(--cyan);">הדביקו ב-Claude</div>
+          <div class="mini-card-body">מדביקים את ה-URL ישירות בשיחה עם Claude Code</div>
+        </div>
+        <div class="mini-card purple">
+          <div class="mini-card-icon">&#9989;</div>
+          <div class="mini-card-title" style="color:#4a28c8;">נשמר אוטומטית</div>
+          <div class="mini-card-body">הסרטון מופיע מיד ב-Notion עם מטא-דאטה מלא</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;margin-top:20px;">
+      <div class="glass-card purple">
+        <div style="display:flex;align-items:flex-start;gap:16px;">
+          <div style="font-size:32px;flex-shrink:0;">&#128161;</div>
+          <div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px;color:var(--text-primary);">הבעיה שהכלי פותר</div>
+            <div style="font-size:16px;color:var(--text-secondary);line-height:1.6;">
+              כל אחד מכיר את הסיטואציה — רואים סרטון מעניין, שומרים ב-Watch Later, ואז שוכחים ממנו לנצח.
+              הכלי הזה יוצר <strong style="color:var(--notion-purple);">מסד נתונים מסודר ב-Notion</strong> עם כותרת, ערוץ, משך, קטגוריה — ומוודא שאין כפילויות.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 2: MCP via CLI ===== -->
+  <div class="slide" id="slide-2">
+    <div class="orb" style="width:280px;height:280px;background:radial-gradient(circle,rgba(124,92,252,0.1),transparent);bottom:80px;right:60px;animation-duration:6s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-purple">שלב 1 — אפשרות א'</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:28px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">התקנת MCP — דרך CLI</span></h2>
+      <p class="slide-subtitle" style="margin-top:10px;">פקודה אחת בטרמינל, Claude Code מטפל בשאר</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-purple">&#128279;</div>
+              <div><strong>MCP</strong> — Model Context Protocol — מאפשר ל-Claude לדבר ישירות עם שירותים חיצוניים כמו Notion</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#9881;</div>
+              <div>מתאים למי שעובד עם <strong>Claude Code CLI</strong> ורוצה שליטה מלאה</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128273;</div>
+              <div>Claude Code יפתח דפדפן לאישור <strong>OAuth</strong> — ללא API Key ידני</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#9989;</div>
+              <div>לאחר ההרצה, Notion זמין מיד לכל הפרויקטים</div>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div class="code-block">
+            <div class="code-header">
+              <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+              <span class="code-filename">Terminal</span>
+            </div>
+            <pre style="margin:0;white-space:pre;line-height:2;"><span class="prompt">$</span> <span class="cmd">claude mcp add --transport http notion https://mcp.notion.com/mcp</span></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 3: MCP via OAuth ===== -->
+  <div class="slide" id="slide-3">
+    <div class="orb" style="width:280px;height:280px;background:radial-gradient(circle,rgba(124,92,252,0.12),transparent);top:60px;left:60px;animation-duration:7s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-purple">שלב 1 — אפשרות ב'</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:28px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">התקנת MCP — דרך claude.ai</span></h2>
+      <p class="slide-subtitle" style="margin-top:10px;">ללא טרמינל — אישור גישה ישירות מהדפדפן</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-purple">&#127760;</div>
+              <div>נכנסים ל-<strong>claude.ai</strong> → Settings → Integrations</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128073;</div>
+              <div>לוחצים <strong>Connect</strong> ליד Notion — מאשרים גישה בדפדפן</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128279;</div>
+              <div>ה-MCP זמין אוטומטית גם ב-<strong>Claude Code</strong> ללא הגדרה נוספת</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128204;</div>
+              <div>אינטגרציה נוצרת <strong>אוטומטית</strong> ב-Notion — ניתן לראות אותה ב-notion.so/profile/integrations/internal</div>
+            </li>
+          </ul>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;">
+          <div style="background:rgba(91,62,222,0.07);border:1px solid rgba(91,62,222,0.25);border-radius:16px;padding:32px 48px;text-align:center;">
+            <div style="font-size:52px;margin-bottom:16px;">📖</div>
+            <div style="color:var(--text-dim);font-size:16px;margin-bottom:18px;">מדריך התקנה מלא</div>
+            <a href="https://developers.notion.com/guides/mcp/get-started-with-mcp" target="_blank" style="display:inline-block;padding:14px 28px;background:rgba(91,62,222,0.12);border:1px solid rgba(91,62,222,0.35);border-radius:10px;color:var(--notion-purple);font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;text-decoration:none;transition:all 0.2s;">לחץ כאן לתיעוד הרשמי ←</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 3: yt-dlp ===== -->
+  <div class="slide" id="slide-4">
+    <div class="orb" style="width:260px;height:260px;background:radial-gradient(circle,rgba(255,0,51,0.08),transparent);top:60px;left:80px;animation-duration:10s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-red">שלב 2</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:28px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-red">התקנת yt-dlp</span></h2>
+      <p class="slide-subtitle" style="margin-top:10px;">הכלי שמאפשר לשלוף מטא-דאטה מסרטוני YouTube</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-red">&#128190;</div>
+              <div><strong>yt-dlp</strong> — כלי command-line בקוד פתוח לשליפת מידע מ-YouTube ועוד</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-red">&#128203;</div>
+              <div>מאפשר לשלוף <strong>כותרת, ערוץ, משך, תמונה ממוזערת</strong> — ללא צורך ב-YouTube API</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-red">&#128640;</div>
+              <div>Claude Code מריץ אותו ברקע — המשתמש לא רואה כלום, הכל קורה אוטומטית</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-red">&#129299;</div>
+              <div>חינמי, מהיר, ועובד עם כל URL של YouTube — כולל Shorts</div>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div style="display:flex;flex-direction:column;gap:14px;">
+            <div class="code-block">
+              <div class="code-header">
+                <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+                <span class="code-filename">macOS</span>
+              </div>
+              <pre style="margin:0;line-height:1.8;"><span class="prompt">$</span> <span class="cmd">brew install yt-dlp</span></pre>
+            </div>
+            <div class="code-block">
+              <div class="code-header">
+                <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+                <span class="code-filename">Windows</span>
+              </div>
+              <pre style="margin:0;line-height:1.8;"><span class="comment"># via Windows Package Manager</span>
+<span class="prompt">></span> <span class="cmd">winget install yt-dlp</span>
+
+<span class="comment"># via Python (cross-platform)</span>
+<span class="prompt">></span> <span class="cmd">pip install yt-dlp</span></pre>
+            </div>
+            <div style="background:rgba(204,0,34,0.06);border:1px solid rgba(204,0,34,0.2);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:14px;direction:ltr;">
+              <span style="font-size:26px;">📦</span>
+              <div>
+                <div style="font-size:14px;color:var(--text-dim);margin-bottom:4px;">כל אפשרויות ההתקנה</div>
+                <a href="https://github.com/yt-dlp/yt-dlp/wiki/Installation" target="_blank" style="color:var(--yt-red);font-size:16px;text-decoration:none;font-weight:700;">github.com/yt-dlp — Installation Wiki ←</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 5: יצירת הדשבורד ===== -->
+  <div class="slide" id="slide-5">
+    <div class="orb" style="width:300px;height:300px;background:radial-gradient(circle,rgba(124,92,252,0.09),transparent);bottom:80px;left:60px;animation-duration:9s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-purple">שלב 3</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:24px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">יצירת הדשבורד ב-Notion</span></h2>
+      <p class="slide-subtitle" style="margin-top:8px;">פעם אחת — הסקיל ימצא אותו אוטומטית בכל פעם</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1060px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-purple">&#129302;</div>
+              <div><strong>אפשרות א׳:</strong> פשוט לבקש מ-Claude Code — "צור לי דאטאבייס ב-Notion לרשימת צפייה של YouTube עם העמודות: כותרת, ערוץ, משך, תאריך, URL, קטגוריה, נצפה"</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128196;</div>
+              <div><strong>אפשרות ב׳:</strong> ידנית — דף חדש ב-Notion ← Table ← שם: <strong>"YouTube Watch List"</strong></div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128204;</div>
+              <div>האינטגרציה מ-OAuth כבר מחוברת — <strong>אין צורך בהגדרה נוספת</strong></div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#9989;</div>
+              <div>הסקיל מחפש לפי השם — חשוב שיהיה בדיוק <strong>"YouTube Watch List"</strong></div>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div class="code-block" style="border-color:rgba(124,92,252,0.3);">
+            <div class="code-header">
+              <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+              <span class="code-filename">עמודות הדאטאבייס</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px 24px;margin-top:4px;">
+              <div style="color:var(--text-secondary);font-size:14px;font-weight:700;padding-bottom:7px;border-bottom:2px solid rgba(91,62,222,0.2);">שם עמודה</div>
+              <div style="color:var(--text-secondary);font-size:14px;font-weight:700;padding-bottom:7px;border-bottom:2px solid rgba(91,62,222,0.2);">סוג</div>
+              <div><span class="string">Title</span></div><div style="color:var(--text-secondary);font-size:15px;">Title</div>
+              <div><span class="string">Channel</span></div><div style="color:var(--text-secondary);font-size:15px;">Text</div>
+              <div><span class="string">Duration</span></div><div style="color:var(--text-secondary);font-size:15px;">Text</div>
+              <div><span class="string">Published</span></div><div style="color:var(--text-secondary);font-size:15px;">Date</div>
+              <div><span class="string">URL</span></div><div style="color:var(--text-secondary);font-size:15px;">URL</div>
+              <div><span class="string">Bucket</span></div><div style="color:var(--text-secondary);font-size:15px;">Select</div>
+              <div><span class="string">Watched</span></div><div style="color:var(--text-secondary);font-size:15px;">Checkbox</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 4: הסקיל ===== -->
+  <div class="slide" id="slide-6">
+    <div class="orb" style="width:320px;height:320px;background:radial-gradient(circle,rgba(0,229,255,0.07),transparent);bottom:60px;left:60px;animation-duration:11s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:10px;">
+      <span class="slide-tag tag-cyan">הסקיל</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:14px;text-align:center;">
+      <h2 class="slide-title md"><span class="grad-cyan">youtube-videos-to-notion-db</span></h2>
+      <p class="slide-subtitle" style="margin-top:6px;">במקום לשמור ידנית — פשוט להדביק URL ו-Claude עושה הכל</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;margin-bottom:12px;">
+      <div class="glass-card cyan" style="padding:12px 20px;">
+        <div style="display:flex;align-items:center;gap:14px;">
+          <div style="font-size:26px;flex-shrink:0;">🤔</div>
+          <div style="font-size:17px;color:var(--text-secondary);line-height:1.65;">
+            <strong style="color:var(--cyan);">למה להשתמש בסקיל?</strong> — בלי הסקיל, כל שמירת סרטון דורשת: פתיחת Notion, מציאת הדאטאבייס, הזנת שם + ערוץ + משך + URL ידנית, בדיקה שלא כפלתם. עם הסקיל — URL אחד בצ'אט, הכל נעשה אוטומטית תוך שניות.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;">
+      <div class="flow-steps">
+        <div class="flow-step">
+          <div class="step-badge badge-red">1</div>
+          <div class="flow-step-label"><strong>מזהה URL</strong> — מחלץ את מזהה הסרטון מקישור YouTube (כולל Shorts, playlists)</div>
+        </div>
+        <div class="flow-step">
+          <div class="step-badge badge-red">2</div>
+          <div class="flow-step-label"><strong>מושך מטא-דאטה</strong> — מריץ yt-dlp לשליפת כותרת, ערוץ, משך, תמונה ממוזערת</div>
+        </div>
+        <div class="flow-step">
+          <div class="step-badge badge-purple">3</div>
+          <div class="flow-step-label"><strong>בודק כפילויות</strong> — מחפש ב-Notion אם הסרטון כבר קיים ברשימה</div>
+        </div>
+        <div class="flow-step">
+          <div class="step-badge badge-purple">4</div>
+          <div class="flow-step-label"><strong>מקצה Bucket</strong> — מנתח את הכותרת והתוכן, מחליט לאיזה קטגוריה שייך הסרטון</div>
+        </div>
+        <div class="flow-step">
+          <div class="step-badge badge-cyan">5</div>
+          <div class="flow-step-label"><strong>מוסיף ל-Notion</strong> — יוצר רשומה חדשה עם כל השדות בפעולה אחת דרך MCP</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;margin-top:10px;padding-bottom:20px;">
+      <a href="GITHUB_LINK_HERE" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:16px;padding:14px 22px;background:rgba(255,255,255,0.9);border:2px solid rgba(30,50,140,0.2);border-radius:14px;box-shadow:0 2px 10px rgba(30,50,140,0.1);transition:all 0.2s;direction:ltr;">
+        <span style="font-size:28px;">⭐</span>
+        <div>
+          <div style="font-size:13px;color:var(--text-dim);margin-bottom:3px;direction:rtl;text-align:right;">קוד מקור — GitHub</div>
+          <div style="font-size:16px;font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--notion-purple);">github.com / ... / youtube-videos-to-notion-db</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 5: איך משתמשים ===== -->
+  <div class="slide" id="slide-7">
+    <div class="orb" style="width:300px;height:300px;background:radial-gradient(circle,rgba(255,183,0,0.07),transparent);top:50px;right:80px;animation-duration:9s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-cyan">שימוש</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:28px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-mixed">איך משתמשים?</span></h2>
+      <p class="slide-subtitle" style="margin-top:8px;">פשוט להפליא — רק להדביק URL</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-cyan">&#128205;</div>
+              <div>מדביקים <strong>URL אחד או כמה ביחד</strong> בהודעה לClaud Code — הסקיל מזהה אוטומטית</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-cyan">&#128640;</div>
+              <div>Claude שולף מטא-דאטה, בודק כפילויות, ומוסיף הכל ל-Notion בפעולה אחת</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-cyan">&#128196;</div>
+              <div>יש כמה טאבים פתוחים של YouTube? תוסף כרום <strong>Copy All URLs 2.0</strong> מעתיק את כולם בלחיצה אחת — ואז מדביקים הכל ביחד</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-cyan">&#9989;</div>
+              <div>תוך שניות — כל הסרטונים מופיעים ב-Notion עם קטגוריות אוטומטיות</div>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div style="display:flex;flex-direction:column;gap:12px;">
+            <div class="code-block" style="border-color:rgba(255,183,0,0.3);">
+              <div class="code-header">
+                <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+                <span class="code-filename" style="direction:rtl;">שיחה עם Claude Code</span>
+              </div>
+              <div style="direction:rtl;text-align:right;">
+                <div style="color:var(--text-primary);font-size:15px;margin-bottom:10px;font-weight:600;">מדביקים כמה URLs ביחד:</div>
+                <div style="padding:10px 14px;background:rgba(138,93,0,0.07);border:1px solid rgba(138,93,0,0.25);border-radius:10px;margin-bottom:12px;direction:ltr;text-align:left;font-size:14px;line-height:1.8;">
+                  <span class="url">https://youtube.com/watch?v=abc123</span><br>
+                  <span class="url">https://youtube.com/watch?v=def456</span><br>
+                  <span class="url">https://youtu.be/ghi789</span>
+                </div>
+                <div style="padding:10px 14px;background:rgba(91,62,222,0.07);border:1px solid rgba(91,62,222,0.25);border-radius:10px;color:var(--text-primary);font-size:14px;line-height:1.7;font-weight:500;">
+                  ✅ נוספו 3 סרטונים ל-YouTube Watch List!<br>
+                  &nbsp;&nbsp;• Claude Code: 1 &nbsp;• Lessons: 1 &nbsp;• General: 1
+                </div>
+              </div>
+            </div>
+            <div style="background:rgba(0,119,168,0.06);border:1px solid rgba(0,119,168,0.2);border-radius:12px;padding:14px 18px;display:flex;align-items:center;gap:14px;direction:ltr;">
+              <span style="font-size:26px;">🧩</span>
+              <div>
+                <div style="font-size:14px;color:var(--text-secondary);margin-bottom:4px;font-weight:600;">תוסף כרום מומלץ</div>
+                <a href="https://chromewebstore.google.com/detail/copy-all-urls-20/ljmbgmkmjcldjljaakpbpmchjbodjmdi" target="_blank" style="color:var(--cyan);font-size:15px;text-decoration:none;font-weight:700;">Copy All URLs 2.0 ←</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 6: בדיקת כפילויות ===== -->
+  <div class="slide" id="slide-8">
+    <div class="orb" style="width:280px;height:280px;background:radial-gradient(circle,rgba(52,211,153,0.07),transparent);bottom:80px;right:60px;animation-duration:8s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:20px;">
+      <span class="slide-tag tag-purple">בדיקת כפילויות</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:28px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">בדיקת כפילויות אוטומטית</span></h2>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <div class="glass-card purple" style="margin-bottom:16px;">
+            <div style="font-size:16px;font-weight:700;margin-bottom:12px;color:#4a28c8;">&#128269; איך זה עובד?</div>
+            <ul class="feature-list" style="gap:10px;">
+              <li style="font-size:15px;">
+                <div class="feature-icon icon-purple" style="width:28px;height:28px;font-size:13px;">1</div>
+                <div>הסקיל מחלץ את <strong>מזהה הסרטון הייחודי</strong> (Video ID) מה-URL</div>
+              </li>
+              <li style="font-size:15px;">
+                <div class="feature-icon icon-purple" style="width:28px;height:28px;font-size:13px;">2</div>
+                <div>מחפש ב-Notion אם כבר קיימת רשומה עם אותו Video ID</div>
+              </li>
+              <li style="font-size:15px;">
+                <div class="feature-icon icon-purple" style="width:28px;height:28px;font-size:13px;">3</div>
+                <div>אם קיים — Claude מודיע ולא מוסיף שוב</div>
+              </li>
+              <li style="font-size:15px;">
+                <div class="feature-icon icon-purple" style="width:28px;height:28px;font-size:13px;">4</div>
+                <div>אם לא קיים — ממשיך לשלב הוספה</div>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div>
+          <div class="code-block" style="border-color:rgba(10,122,80,0.25);">
+            <div class="code-header">
+              <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+              <span class="code-filename">כפילות נמצאה</span>
+            </div>
+            <div style="direction:rtl;text-align:right;font-family:'Heebo',sans-serif;">
+              <div style="padding:14px;background:rgba(204,0,34,0.07);border:1px solid rgba(204,0,34,0.2);border-radius:10px;margin-bottom:12px;font-size:16px;color:var(--text-secondary);">
+                &#9888;&#65039; הסרטון "Never Gonna Give You Up" כבר נמצא ברשימה שלך!<br><br>
+                <span style="color:var(--text-secondary);font-size:14px;">נוסף ב: 2024-03-15<br>Bucket: General<br>סטטוס: To Watch</span>
+              </div>
+              <div style="padding:14px;background:rgba(10,122,80,0.07);border:1px solid rgba(10,122,80,0.2);border-radius:10px;font-size:16px;color:var(--text-secondary);">
+                &#9989; סרטון חדש נוסף בהצלחה!<br><br>
+                <span style="color:var(--text-secondary);font-size:14px;">לא נמצאו כפילויות — הרשומה נוצרה</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 7: Buckets ===== -->
+  <div class="slide" id="slide-9">
+    <div class="orb" style="width:350px;height:350px;background:radial-gradient(circle,rgba(124,92,252,0.09),transparent);top:30px;right:30px;animation-duration:12s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:16px;">
+      <span class="slide-tag tag-purple">קטגוריזציה</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:20px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">הקצאת Buckets חכמה</span></h2>
+      <p class="slide-subtitle" style="margin-top:8px;">Claude מבין מהתוכן לאיזה קטגוריה שייך הסרטון</p>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;">
+      <div class="buckets-grid">
+        <div class="bucket-card b1">
+          <div class="bucket-emoji">&#10024;</div>
+          <div class="bucket-name">Claude Code</div>
+          <div class="bucket-desc">סרטונים על Claude, AI coding, Anthropic</div>
+        </div>
+        <div class="bucket-card b2">
+          <div class="bucket-emoji">&#127891;</div>
+          <div class="bucket-name">Lessons</div>
+          <div class="bucket-desc">הדרכות, קורסים, לימוד טכנולוגיה</div>
+        </div>
+        <div class="bucket-card b3">
+          <div class="bucket-emoji">&#127760;</div>
+          <div class="bucket-name">General</div>
+          <div class="bucket-desc">כל השאר — תוכן כללי מעניין</div>
+        </div>
+        <div class="bucket-card b4">
+          <div class="bucket-emoji">&#127939;</div>
+          <div class="bucket-name">Long Run</div>
+          <div class="bucket-desc">סרטונים ארוכים לצפייה בזמן פנוי</div>
+        </div>
+        <div class="bucket-card b5">
+          <div class="bucket-emoji">&#127482;&#127480;</div>
+          <div class="bucket-name">English</div>
+          <div class="bucket-desc">תוכן באנגלית לשיפור שפה</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:900px;margin-top:18px;">
+      <div class="glass-card cyan" style="padding:16px 24px;">
+        <div style="display:flex;align-items:flex-start;gap:14px;">
+          <div style="font-size:22px;flex-shrink:0;">&#129504;</div>
+          <div style="font-size:17px;color:var(--text-secondary);line-height:1.65;">
+            Claude <strong style="color:var(--cyan);">מנתח את כותרת הסרטון, שם הערוץ והתוכן</strong> — ומחליט אוטומטית לאיזה Bucket הוא שייך. הבאקטים שמוצגים כאן הם <strong style="color:var(--text-primary);">המלצה בלבד</strong> — ניתן ליצור Buckets עם כל שמות שתרצו, למחוק ולשנות לפי הצורך. ככל שיש יותר אפשרויות בדאטאבייס, כך הסקיל ינצל אותן בצורה חכמה יותר.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 8: דשבורד Notion ===== -->
+  <div class="slide" id="slide-10">
+    <div class="orb" style="width:290px;height:290px;background:radial-gradient(circle,rgba(124,92,252,0.1),transparent);bottom:60px;left:40px;animation-duration:9s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:16px;">
+      <span class="slide-tag tag-purple">הדשבורד</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:20px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-purple">הדשבורד ב-Notion</span></h2>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:1000px;">
+      <div class="split-layout">
+        <div>
+          <ul class="feature-list">
+            <li>
+              <div class="feature-icon icon-purple">&#128203;</div>
+              <div><strong>תצוגת טבלה</strong> — כל הסרטונים עם כותרת, ערוץ, משך, Bucket, סטטוס</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128196;</div>
+              <div><strong>Board לפי Bucket</strong> — כרטיסיות מסודרות לפי קטגוריה</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128269;</div>
+              <div><strong>פילטר To Watch</strong> — תצוגה מהירה של מה שעוד לא ראיתם</div>
+            </li>
+            <li>
+              <div class="feature-icon icon-purple">&#128451;</div>
+              <div><strong>ארכיון Watched</strong> — סרטונים שכבר ראיתם עוברים ל-Watched</div>
+            </li>
+          </ul>
+        </div>
+        <div>
+          <div class="notion-mockup">
+            <div class="notion-topbar">
+              <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+              <div class="notion-topbar-title">&#9635; YouTube Watch List</div>
+            </div>
+            <div class="notion-row header">
+              <div class="notion-cell">כותרת</div>
+              <div class="notion-cell">Bucket</div>
+              <div class="notion-cell">סטטוס</div>
+            </div>
+            <div class="notion-row">
+              <div class="notion-cell title">Claude Code Tips 2024</div>
+              <div class="notion-cell"><span class="bucket-chip bucket-claude">Claude Code</span></div>
+              <div class="notion-cell" style="color:#0a7a50;">&#9679; To Watch</div>
+            </div>
+            <div class="notion-row">
+              <div class="notion-cell title">React 19 Full Course</div>
+              <div class="notion-cell"><span class="bucket-chip bucket-lessons">Lessons</span></div>
+              <div class="notion-cell" style="color:#0a7a50;">&#9679; To Watch</div>
+            </div>
+            <div class="notion-row">
+              <div class="notion-cell title">3-Hour Documentary</div>
+              <div class="notion-cell"><span class="bucket-chip bucket-long">Long Run</span></div>
+              <div class="notion-cell" style="color:#0a7a50;">&#9679; To Watch</div>
+            </div>
+            <div class="notion-row">
+              <div class="notion-cell title">Notion Tips & Tricks</div>
+              <div class="notion-cell"><span class="bucket-chip bucket-general">General</span></div>
+              <div class="notion-cell" style="color:var(--text-dim);">&#10003; Watched</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SLIDE 9: סיכום ===== -->
+  <div class="slide" id="slide-11">
+    <div class="orb" style="width:400px;height:400px;background:radial-gradient(circle,rgba(124,92,252,0.1),transparent);top:-60px;left:-60px;animation-duration:10s;"></div>
+    <div class="orb" style="width:350px;height:350px;background:radial-gradient(circle,rgba(255,0,51,0.08),transparent);bottom:-60px;right:-60px;animation-duration:8s;"></div>
+
+    <div class="animate-in" style="text-align:center;margin-bottom:16px;">
+      <span class="slide-tag tag-cyan">סיכום</span>
+    </div>
+    <div class="animate-in" style="margin-bottom:24px;text-align:center;">
+      <h2 class="slide-title lg"><span class="grad-mixed">למה זה משנה?</span></h2>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:800px;margin-bottom:20px;">
+      <div class="journey-row">
+        <div class="journey-item">
+          <div class="journey-icon">&#9654;</div>
+          <div class="journey-label">מוצאים סרטון</div>
+        </div>
+        <div class="journey-arrow">&#8592;</div>
+        <div class="journey-item">
+          <div class="journey-icon">&#128204;</div>
+          <div class="journey-label">מדביקים URL</div>
+        </div>
+        <div class="journey-arrow">&#8592;</div>
+        <div class="journey-item">
+          <div class="journey-icon">&#10024;</div>
+          <div class="journey-label">Claude עובד</div>
+        </div>
+        <div class="journey-arrow">&#8592;</div>
+        <div class="journey-item">
+          <div class="journey-icon">&#9635;</div>
+          <div class="journey-label">ב-Notion</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="width:100%;max-width:800px;">
+      <div class="benefit-list">
+        <div class="benefit-item">
+          <div class="benefit-check">&#10003;</div>
+          <div><strong>ללא העתקה ידנית</strong> — URL אחד, ורשימה מסודרת מלאה</div>
+        </div>
+        <div class="benefit-item">
+          <div class="benefit-check">&#10003;</div>
+          <div><strong>ללא כפילויות</strong> — בדיקה אוטומטית לפני כל הוספה</div>
+        </div>
+        <div class="benefit-item">
+          <div class="benefit-check">&#10003;</div>
+          <div><strong>קטגוריזציה אוטומטית</strong> — Claude מבין מה הסרטון ומסדר אותו</div>
+        </div>
+        <div class="benefit-item">
+          <div class="benefit-check">&#10003;</div>
+          <div><strong>דשבורד חכם ב-Notion</strong> — תצוגות, פילטרים, ארכיון מובנה</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="animate-in" style="margin-top:22px;text-align:center;">
+      <div style="font-size:18px;font-weight:700;color:var(--text-primary);line-height:1.5;">
+        הטכנולוגיה עובדת בשבילכם —<br>
+        <span class="grad-mixed">תצפו רק במה שבאמת חשוב לכם</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /presentation -->
+
+<!-- NAV -->
+<div id="progress-bar-wrap"><div id="progress-bar"></div></div>
+<div id="nav-bar">
+  <button class="nav-btn" id="btn-prev" title="הקודם">&#8594;</button>
+  <span id="slide-counter">1 / 12</span>
+  <span id="keyboard-hint">&#8592; &#8594; לניווט</span>
+  <button class="nav-btn" id="btn-next" title="הבא">&#8592;</button>
+</div>
+
+<script>
+  // ===== STARS =====
+  const bgCanvas = document.getElementById('bg-canvas');
+  for (let i = 0; i < 160; i++) {
+    const star = document.createElement('div');
+    star.className = 'star';
+    const size = Math.random() * 2.2 + 0.5;
+    star.style.cssText = `
+      width:${size}px; height:${size}px;
+      top:${Math.random()*100}vh; left:${Math.random()*100}vw;
+      --dur:${2 + Math.random()*5}s;
+      --delay:${Math.random()*5}s;
+      --base-op:${0.15 + Math.random()*0.5};
+    `;
+    bgCanvas.appendChild(star);
+  }
+
+  // ===== SLIDE SYSTEM =====
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  const total = slides.length;
+  let current = 0;
+  let isAnimating = false;
+
+  const progressBar = document.getElementById('progress-bar');
+  const counter = document.getElementById('slide-counter');
+  const btnPrev = document.getElementById('btn-prev');
+  const btnNext = document.getElementById('btn-next');
+
+  function updateUI() {
+    counter.textContent = `${current + 1} / ${total}`;
+    progressBar.style.width = `${((current + 1) / total) * 100}%`;
+    btnPrev.disabled = current === 0;
+    btnNext.disabled = current === total - 1;
+  }
+
+  function goTo(idx) {
+    if (isAnimating || idx === current || idx < 0 || idx >= total) return;
+    isAnimating = true;
+
+    const fromEl = slides[current];
+    const toEl = slides[idx];
+    // RTL: going forward (idx > current) = slide comes from LEFT (negative X in LTR = positive in visual RTL)
+    // We use visual direction: next slide enters from left side of screen
+    const dir = idx > current ? 1 : -1;
+
+    // Step 1: Add active to incoming slide FIRST (per feedback memory)
+    toEl.classList.add('active');
+
+    // Step 2: Position toEl off-screen without transition
+    toEl.style.transition = 'none';
+    toEl.style.opacity = '0';
+    toEl.style.transform = `translateX(${dir * -90}px)`;
+
+    // Step 3: Force synchronous reflow (per feedback memory — use offsetWidth not double rAF)
+    void toEl.offsetWidth;
+
+    // Step 4: Animate both slides
+    const TRANS = 'opacity 0.72s cubic-bezier(0.16,1,0.3,1), transform 0.72s cubic-bezier(0.16,1,0.3,1)';
+    toEl.style.transition = TRANS;
+    toEl.style.opacity = '1';
+    toEl.style.transform = 'translateX(0)';
+
+    fromEl.style.transition = TRANS;
+    fromEl.style.opacity = '0';
+    fromEl.style.transform = `translateX(${dir * 90}px)`;
+
+    current = idx;
+    updateUI();
+
+    // Step 5: Cleanup after animation — only remove active from fromEl (per feedback memory)
+    setTimeout(() => {
+      fromEl.classList.remove('active');
+      fromEl.style.transition = '';
+      fromEl.style.opacity = '';
+      fromEl.style.transform = '';
+      toEl.style.transition = '';
+      toEl.style.opacity = '';
+      toEl.style.transform = '';
+      isAnimating = false;
+    }, 750);
+
+    // Glitch effect on title slide
+    if (idx === 0) {
+      const glitch = document.querySelector('.glitch');
+      if (glitch) {
+        glitch.classList.add('active');
+        setTimeout(() => glitch.classList.remove('active'), 350);
+      }
+    }
+  }
+
+  // Init first slide
+  slides[0].classList.add('active');
+  updateUI();
+
+  // Controls
+  btnNext.addEventListener('click', () => goTo(current + 1));
+  btnPrev.addEventListener('click', () => goTo(current - 1));
+
+  document.addEventListener('keydown', e => {
+    // RTL keyboard: ArrowLeft = forward, ArrowRight = backward
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') goTo(current + 1);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') goTo(current - 1);
+    if (e.key === ' ') { e.preventDefault(); goTo(current + 1); }
+  });
+
+  // Touch swipe (RTL-aware)
+  let touchStartX = 0;
+  document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) {
+      // RTL: swipe right = go back (prev), swipe left = go forward (next)
+      if (dx > 0) goTo(current - 1);
+      else goTo(current + 1);
+    }
+  }, { passive: true });
+</script>
+</body>
+</html>
